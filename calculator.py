@@ -12,6 +12,7 @@
 # 打印税后工资列表
 
 import sys, csv
+from multiprocessing import Queue, Process
 
 
 # 税率配置
@@ -53,7 +54,7 @@ class UserWage(object):
     def write_list_to_file(self,data):
         with open(self.file_path,'a',newline = "") as file:
             writer = csv.writer(file,dialect = "excel")
-            writer.writerow(data)
+            writer.writerows(data)
 
 
 def calc_real_wages(job_num,wages,JShuL,JShuH,YangLao,YiLiao,ShiYe,GongShang,ShengYu,GongJiJin):
@@ -127,7 +128,39 @@ def calc_real_wages(job_num,wages,JShuL,JShuH,YangLao,YiLiao,ShiYe,GongShang,She
     return [job_num, int(wages), format(insurance,'.2f'), format(taxes_amount,'.2f'), format(real_wages,'.2f')]
 
 
-if __name__ == '__main__':
+def get_user_info(file_path, queue):
+    user = UserWage(file_path)
+    user_data = user.get_user_wage()
+    queue.put(user_data)
+
+
+def calculate_salary(file_path, queue_in, queue_out):
+    all_salary_data=[]
+    user_data = queue_in.get()
+    config = Config(file_path)
+    JShuL = config.get_config_item('JiShuL')
+    JShuH = config.get_config_item('JiShuH')
+    YangLao = config.get_config_item('YangLao')
+    YiLiao = config.get_config_item('YiLiao')
+    ShiYe = config.get_config_item('ShiYe')
+    GongShang = config.get_config_item('GongShang')
+    ShengYu = config.get_config_item('ShengYu')
+    GongJiJin = config.get_config_item('GongJiJin')
+
+    for user_num, wage in user_data.items():
+        # 计算工资
+        wage_detail = calc_real_wages(user_num, wage, JShuL, JShuH, YangLao, YiLiao, ShiYe, GongShang, ShengYu,GongJiJin)
+        all_salary_data.append(wage_detail)
+    queue_out.put(all_salary_data)
+
+
+def save_salary(filepath, queue):
+    salary_data = queue.get()
+    save_wage = UserWage(filepath)
+    save_wage.write_list_to_file(salary_data)
+
+
+def main():
     # 取参数文件
 
     args = sys.argv[1:]
@@ -140,28 +173,13 @@ if __name__ == '__main__':
     param_o_index = args.index('-o')
     wages_detail_config_path = args[param_o_index + 1]
 
-    # 获取用户信息
-    # user_info_file_path = os.path.join(sys.path[0], 'UserWage.csv')
-    user = UserWage(usr_info_config_path)
-    wage_info = user.get_user_wage()
+    user_2_salary_queue = Queue()
+    salary_2_file_queue = Queue()
 
-    # 获取个税配置
-    # config_file_path = os.path.join(sys.path[0], 'config.cfg')
-    config = Config(tax_config_path)
-    JShuL = config.get_config_item('JiShuL')
-    JShuH = config.get_config_item('JiShuH')
-    YangLao = config.get_config_item('YangLao')
-    YiLiao = config.get_config_item('YiLiao')
-    ShiYe = config.get_config_item('ShiYe')
-    GongShang = config.get_config_item('GongShang')
-    ShengYu = config.get_config_item('ShengYu')
-    GongJiJin = config.get_config_item('GongJiJin')
+    Process(target=get_user_info,args=(usr_info_config_path,user_2_salary_queue)).start()
+    Process(target=calculate_salary,args=(tax_config_path,user_2_salary_queue,salary_2_file_queue)).start()
+    Process(target=save_salary,args=(wages_detail_config_path,salary_2_file_queue)).start()
 
-    for user_num, wage in wage_info.items():
-        # 计算工资
-        wage_detail = calc_real_wages(user_num, wage, JShuL, JShuH, YangLao, YiLiao, ShiYe, GongShang, ShengYu, GongJiJin)
 
-        # 保存信息
-        # save_wage_path = os.path.join(sys.path[0], 'userdata.csv')
-        save_wage = UserWage(wages_detail_config_path)
-        save_wage.write_list_to_file(wage_detail)
+if __name__ == '__main__':
+    main()
